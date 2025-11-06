@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+.env/
+env/
+.venv/
+
+# Environment variables
+*.env
+
+# Django specific
+*.log
+*.pot
+*.pyc
+db.sqlite3
+media/
+staticfiles/
+static_root/
+local_settings.py
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Jupyter Notebooks (if you use them with pandas)
+.ipynb_checkpoints/
+
+# Excel / temporary data files
+~$*.xlsx
+*.xlsb
+*.xlsm
+
+# Requests / MSAL cache
+token_cache.bin
+token_cache.json
+
+# Coverage / testing
+htmlcov/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+test-results/
