@@ -64,7 +64,7 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-  'http://localhost:5173',
+  'http://localhost:5173','https://sarala-quotation-dashboard-v2.vercel.app'
 ]
 # If you use cookies:
 CORS_ALLOW_CREDENTIALS = True
