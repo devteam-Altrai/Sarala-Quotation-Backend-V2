@@ -1,0 +1,1 @@
+web: gunicorn sarala_backend.wsgi
