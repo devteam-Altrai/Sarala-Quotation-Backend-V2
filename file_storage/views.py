@@ -672,7 +672,7 @@ def update_dashboard(request):
 @csrf_exempt
 @require_GET
 def price_list_fetch(request):
-    data = list(ProjectData.objects.values("project_name", "part_no", "unit"))
+    data = list(ProjectData.objects.values("project_name", "part_no", "mat", "vmc", "cnc", "hand", "laser", "bend", "ext", "weld", "unit", "quantity", "profit"))
     return JsonResponse({"status": "ok", "data": data})
 
 
