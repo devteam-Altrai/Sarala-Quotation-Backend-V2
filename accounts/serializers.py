@@ -36,6 +36,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             )
 
         # Optional: include username and role in the response
+        data['id'] = self.user.id
         data['username'] = self.user.username
         data['role'] = self.user.role
 

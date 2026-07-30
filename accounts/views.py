@@ -25,6 +25,13 @@ from django.views.decorators.http import require_GET
 from django.http import JsonResponse
 
 
+import secrets
+import string
+
+from django.core.mail import send_mail
+from django.db import transaction
+
+
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = (AllowAny,)
@@ -66,3 +73,54 @@ class ApproveUserView(APIView):
 def FetchLoginDetail(request):
     data = list(User.objects.filter(status="pending").values("id", "username", "date_joined"))
     return JsonResponse({"status" : "ok", "data": data})
+
+
+class SendTemporaryPasswordView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
+    def post(self, request, user_id):
+        user = get_object_or_404(User, id=user_id)
+
+        if user.status != "active":
+            return Response(
+                {"detail": "Only active users can receive a temporary password."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        temporary_password = "".join(
+            secrets.choice(alphabet) for _ in range(20)
+        )
+
+        try:
+            with transaction.atomic():
+                user.set_password(temporary_password)
+                user.save(update_fields=["password"])
+
+                sent = send_mail(
+                    subject="Your Sarala Engineering temporary password",
+                    message=(
+                        f"Hello {user.username},\n\n"
+                        "Your temporary password is:\n\n"
+                        f"{temporary_password}\n\n"
+                        "Please keep this password confidential. "
+                        "You will be able to change it soon."
+                    ),
+                    from_email=None,
+                    recipient_list=[user.email],
+                    fail_silently=False,
+                )
+
+                if sent != 1:
+                    raise RuntimeError("Email could not be sent.")
+
+        except Exception:
+            return Response(
+                {"detail": "Password email could not be sent. The password was not changed."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {"message": f"A temporary password was sent to {user.email}."},
+            status=status.HTTP_200_OK,
+        )

@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from django.utils import timezone
 # import datetime
 from datetime import datetime
+from threading import Thread
 
 from rest_framework.response import Response
 from rest_framework import status
@@ -37,10 +38,13 @@ from io import BytesIO
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rest_framework.decorators import api_view
+from asgiref.sync import async_to_sync
+from .connection_manager import ConnectionManager
 
 from .utils import get_financial_year_code,generate_order_serial
 import logging
 
+from file_storage.file_processing_utils.file_processing import file_processing
 
 # -------------------------------
 # Azure / OneDrive Configuration
@@ -122,6 +126,244 @@ def stream_upload(upload_url, fileobj, total_size, chunk_size=10 * 1024 * 1024):
 # Main Upload View
 # -------------------------------
 
+# @csrf_exempt
+# def upload_zip(request):
+#     if request.method != "POST":
+#         return HttpResponse("Use POST", status=400)
+
+#     uploaded_file = request.FILES.get("file")
+#     if not uploaded_file:
+#         return HttpResponseBadRequest("Missing file field")
+    
+#     job_id = request.POST.get("user_id")
+#     assembly_client = request.POST.get("client")
+
+#     if not job_id:
+#         return HttpResponseBadRequest("Insuffcient data")
+#     if not assembly_client: 
+#         return HttpResponseBadRequest("Insuffcient client data")
+    
+#     async_to_sync(ConnectionManager.send)(
+#     job_id,
+#     {
+#         "type": "test",
+#         "message": "Upload API reached successfully"
+#     }
+# )
+
+#     project_name = os.path.splitext(uploaded_file.name)[0]
+#     site_url = request.POST.get("site_url", DEFAULT_SP_SITE)
+#     if not site_url:
+#         return HttpResponseBadRequest("Missing site_url and SP_SITE_URL not set")
+
+#     dest_path = request.POST.get("dest_path", "").strip("/")
+
+#     try:
+#         with tempfile.TemporaryDirectory() as temp_dir:
+
+#             # Save uploaded zip locally
+#             zip_path = (
+#                 uploaded_file.temporary_file_path()
+#                 if hasattr(uploaded_file, "temporary_file_path")
+#                 else os.path.join(temp_dir, uploaded_file.name)
+#             )
+#             if not hasattr(uploaded_file, "temporary_file_path"):
+#                 with open(zip_path, "wb") as f:
+#                     for chunk in uploaded_file.chunks():
+#                         f.write(chunk)
+
+#             # Extract ZIP
+#             with zipfile.ZipFile(zip_path, "r") as zip_ref:
+#                 zip_ref.extractall(temp_dir)
+
+#             # Find Excel file if exists
+#             excel_file = None
+
+#             for root, dirs, files in os.walk(temp_dir):
+#                 for file in files:
+#                     if file.endswith((".xlsx", ".xls")):
+#                         excel_file = os.path.join(root, file)
+#                         break
+#                 if excel_file:
+#                     break
+            
+#             for root, dirs, files in os.walk(temp_dir):
+#                 for file in files:
+#                     if file.lower().endswith(".pdf"):
+#                         pdf_file = os.path.join(root, file)
+#                         temp_output = pdf_file + ".tmp.pdf"
+                        
+#                         match assembly_client.lower():
+#                             case "vvdn":
+#                                 vvdn_pdf(pdf_file, temp_output)
+#                                 os.replace(temp_output, pdf_file)
+#                             case "asm":
+#                                 asm_pdf(pdf_file, temp_output)
+#                                 os.replace(temp_output, pdf_file)
+#                             case "sanmina":
+#                                 sanmina_pdf(pdf_file, temp_output)
+#                                 os.replace(temp_output, pdf_file)
+#                             case "anora":
+#                                 anora_pdf(pdf_file, temp_output)
+#                                 os.replace(temp_output, pdf_file)
+#                             case _:
+#                                 shutil.copy2(pdf_file, temp_output)
+
+#                         # vvdn_pdf(pdf_file, temp_output)
+#                         # os.replace(temp_output, pdf_file)
+            
+
+#             # Parse Excel → Save DB
+#             if excel_file:
+#                 df = pd.read_excel(excel_file)
+
+#                 for _, row in df.iterrows():
+#                     first_col = row.iloc[0]
+#                     if pd.isna(first_col) or str(first_col).strip() == "":
+#                         continue
+#                     if pd.isna(row.iloc[1]) or str(row.iloc[1]).strip() == "":
+#                         continue
+
+#                     part_no = str(row.iloc[1]).strip()
+#                     description = str(row.iloc[2]).strip()
+#                     raw_qty = row.iloc[3]
+
+#                     try:
+#                         quantity = int(float(raw_qty)) if pd.notna(raw_qty) else 0
+#                     except:
+#                         quantity = 0
+
+#                     ProjectData.objects.update_or_create(
+#                         project_name=project_name,
+#                         part_no=part_no,
+#                         defaults={"description": description, "quantity": quantity}
+#                     )
+
+#                 DashboardData.objects.update_or_create(
+#                     projectName=project_name,
+#                     defaults={"quotationname": "", "grandTotal": 0, "projectStatus":"PENDING"}
+#                 )
+
+#                 async_to_sync(ConnectionManager.send)(
+#                         job_id,
+#                         {
+#                             "type": "test",
+#                             "message": "Excel parsed and db saved"
+#                         }
+#                     )
+
+#             else:
+#                 # No Excel → Create DB entries from file names
+#                 for root, dirs, files in os.walk(temp_dir):
+#                     for file_name in files:
+#                         if file_name == uploaded_file.name:
+#                             continue
+#                         part_no = os.path.splitext(file_name)[0]
+#                         ProjectData.objects.update_or_create(
+#                             project_name=project_name,
+#                             part_no=part_no,
+#                             defaults={"description": "", "quantity": 1}
+#                         )
+
+#                 DashboardData.objects.update_or_create(
+#                     projectName=project_name,
+#                     defaults={"quotationname": "", "grandTotal": 0, "projectStatus":"PENDING"}
+#                 )
+
+#                 async_to_sync(ConnectionManager.send)(
+#                         job_id,
+#                         {
+#                             "type": "test",
+#                             "message": "Excel parsed and db saved"
+#                         }
+#                     )
+
+#             # OneDrive Upload — now optimized
+#             token = get_access_token()
+#             site_id = get_site_id(token, site_url)
+#             full_folder_path = f"{dest_path}/{project_name}" if dest_path else project_name
+#             safe_folder_path = quote(full_folder_path, safe="/")
+
+#             folder_endpoint = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{safe_folder_path}:"
+#             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+#             create_folder_resp = requests.put(folder_endpoint, headers=headers, json={"folder": {}})
+#             if create_folder_resp.status_code not in (200, 201):
+#                 raise Exception(f"Failed to create folder: {create_folder_resp.status_code} {create_folder_resp.text}")
+
+#             # Shared HTTP session for speed
+#             session = requests.Session()
+#             session.headers.update({"Authorization": f"Bearer {token}"})
+
+#             uploaded_files = []
+#             async_to_sync(ConnectionManager.send)(
+#                         job_id,
+#                         {
+#                             "type": "test",
+#                             "message": "File upload to onedrive started"
+#                         }
+#                     )
+#             def upload_single_file(local_path, remote_path):
+#                 upload_url = create_upload_session(token, site_id, remote_path)
+#                 total_size = os.path.getsize(local_path)
+#                 chunk_size = 5 * 1024 * 1024  # 5 MB
+
+#                 with open(local_path, "rb") as f:
+#                     start = 0
+#                     while True:
+#                         chunk = f.read(chunk_size)
+#                         if not chunk:
+#                             break
+
+#                         end = start + len(chunk) - 1
+#                         headers = {
+#                             "Content-Range": f"bytes {start}-{end}/{total_size}",
+#                             "Content-Length": str(len(chunk)),
+#                             "Content-Type": "application/octet-stream",
+#                         }
+#                         r = session.put(upload_url, data=chunk, headers=headers)
+
+#                         if r.status_code in (200, 201):
+#                             result = r.json()
+#                             return {"name": os.path.basename(local_path), "id": result.get("id")}
+#                         elif r.status_code == 202:
+#                             start = end + 1
+#                             continue
+#                         else:
+#                             raise Exception(f"Upload failed: {r.status_code} {r.text}")
+
+#             tasks = []
+#             with ThreadPoolExecutor(max_workers=16) as executor:
+#                 for root, dirs, files in os.walk(temp_dir):
+#                     for file_name in files:
+#                         if file_name == uploaded_file.name:
+#                             continue
+#                         local_path = os.path.join(root, file_name)
+#                         remote_path = f"{full_folder_path}/{file_name}"
+#                         tasks.append(executor.submit(upload_single_file, local_path, remote_path))
+
+#                 for future in as_completed(tasks):
+#                     uploaded_files.append(future.result())
+#             async_to_sync(ConnectionManager.send)(
+#                         job_id,
+#                         {
+#                             "type": "test",
+#                             "message": "completed"
+#                         }
+#                     )
+
+#         return JsonResponse({"status": "ok", "folder": full_folder_path, "uploaded_files": uploaded_files})
+
+#     except Exception as e:
+#         async_to_sync(ConnectionManager.send)(
+#                         job_id,
+#                         {
+#                             "type": "test",
+#                             "message": "Error in uploading try again"
+#                         }
+#                     )
+#         return JsonResponse({"status": "error", "error": str(e)}, status=500)
+
+
 @csrf_exempt
 def upload_zip(request):
     if request.method != "POST":
@@ -130,155 +372,25 @@ def upload_zip(request):
     uploaded_file = request.FILES.get("file")
     if not uploaded_file:
         return HttpResponseBadRequest("Missing file field")
+    
+    job_id = request.POST.get("user_id")
+    assembly_client = request.POST.get("client")
 
-    project_name = os.path.splitext(uploaded_file.name)[0]
-    site_url = request.POST.get("site_url", DEFAULT_SP_SITE)
-    if not site_url:
-        return HttpResponseBadRequest("Missing site_url and SP_SITE_URL not set")
+    if not job_id:
+        return HttpResponseBadRequest("Insuffcient data")
+    if not assembly_client: 
+        return HttpResponseBadRequest("Insuffcient client data")
 
-    dest_path = request.POST.get("dest_path", "").strip("/")
+    
+    # file_processing(uploaded_file, DEFAULT_SP_SITE, assembly_client, job_id)
 
-    try:
-        with tempfile.TemporaryDirectory() as temp_dir:
+    Thread(
+        target= file_processing,
+        args=(uploaded_file, DEFAULT_SP_SITE, assembly_client, job_id),
+        daemon=True
+    ).start()    
 
-            # Save uploaded zip locally
-            zip_path = (
-                uploaded_file.temporary_file_path()
-                if hasattr(uploaded_file, "temporary_file_path")
-                else os.path.join(temp_dir, uploaded_file.name)
-            )
-            if not hasattr(uploaded_file, "temporary_file_path"):
-                with open(zip_path, "wb") as f:
-                    for chunk in uploaded_file.chunks():
-                        f.write(chunk)
-
-            # Extract ZIP
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(temp_dir)
-
-            # Find Excel file if exists
-            excel_file = None
-            for root, dirs, files in os.walk(temp_dir):
-                for file in files:
-                    if file.endswith((".xlsx", ".xls")):
-                        excel_file = os.path.join(root, file)
-                        break
-                if excel_file:
-                    break
-
-            # Parse Excel → Save DB
-            if excel_file:
-                df = pd.read_excel(excel_file)
-
-                for _, row in df.iterrows():
-                    first_col = row.iloc[0]
-                    if pd.isna(first_col) or str(first_col).strip() == "":
-                        continue
-                    if pd.isna(row.iloc[1]) or str(row.iloc[1]).strip() == "":
-                        continue
-
-                    part_no = str(row.iloc[1]).strip()
-                    description = str(row.iloc[2]).strip()
-                    raw_qty = row.iloc[3]
-
-                    try:
-                        quantity = int(float(raw_qty)) if pd.notna(raw_qty) else 0
-                    except:
-                        quantity = 0
-
-                    ProjectData.objects.update_or_create(
-                        project_name=project_name,
-                        part_no=part_no,
-                        defaults={"description": description, "quantity": quantity}
-                    )
-
-                DashboardData.objects.update_or_create(
-                    projectName=project_name,
-                    defaults={"quotationname": "", "grandTotal": 0, "projectStatus":"PENDING"}
-                )
-
-            else:
-                # No Excel → Create DB entries from file names
-                for root, dirs, files in os.walk(temp_dir):
-                    for file_name in files:
-                        if file_name == uploaded_file.name:
-                            continue
-                        part_no = os.path.splitext(file_name)[0]
-                        ProjectData.objects.update_or_create(
-                            project_name=project_name,
-                            part_no=part_no,
-                            defaults={"description": "", "quantity": 1}
-                        )
-
-                DashboardData.objects.update_or_create(
-                    projectName=project_name,
-                    defaults={"quotationname": "", "grandTotal": 0, "projectStatus":"PENDING"}
-                )
-
-            # OneDrive Upload — now optimized
-            token = get_access_token()
-            site_id = get_site_id(token, site_url)
-            full_folder_path = f"{dest_path}/{project_name}" if dest_path else project_name
-            safe_folder_path = quote(full_folder_path, safe="/")
-
-            folder_endpoint = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{safe_folder_path}:"
-            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-            create_folder_resp = requests.put(folder_endpoint, headers=headers, json={"folder": {}})
-            if create_folder_resp.status_code not in (200, 201):
-                raise Exception(f"Failed to create folder: {create_folder_resp.status_code} {create_folder_resp.text}")
-
-            # Shared HTTP session for speed
-            session = requests.Session()
-            session.headers.update({"Authorization": f"Bearer {token}"})
-
-            uploaded_files = []
-
-            def upload_single_file(local_path, remote_path):
-                upload_url = create_upload_session(token, site_id, remote_path)
-                total_size = os.path.getsize(local_path)
-                chunk_size = 5 * 1024 * 1024  # 5 MB
-
-                with open(local_path, "rb") as f:
-                    start = 0
-                    while True:
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-
-                        end = start + len(chunk) - 1
-                        headers = {
-                            "Content-Range": f"bytes {start}-{end}/{total_size}",
-                            "Content-Length": str(len(chunk)),
-                            "Content-Type": "application/octet-stream",
-                        }
-                        r = session.put(upload_url, data=chunk, headers=headers)
-
-                        if r.status_code in (200, 201):
-                            result = r.json()
-                            return {"name": os.path.basename(local_path), "id": result.get("id")}
-                        elif r.status_code == 202:
-                            start = end + 1
-                            continue
-                        else:
-                            raise Exception(f"Upload failed: {r.status_code} {r.text}")
-
-            tasks = []
-            with ThreadPoolExecutor(max_workers=16) as executor:
-                for root, dirs, files in os.walk(temp_dir):
-                    for file_name in files:
-                        if file_name == uploaded_file.name:
-                            continue
-                        local_path = os.path.join(root, file_name)
-                        remote_path = f"{full_folder_path}/{file_name}"
-                        tasks.append(executor.submit(upload_single_file, local_path, remote_path))
-
-                for future in as_completed(tasks):
-                    uploaded_files.append(future.result())
-
-        return JsonResponse({"status": "ok", "folder": full_folder_path, "uploaded_files": uploaded_files})
-
-    except Exception as e:
-        return JsonResponse({"status": "error", "error": str(e)}, status=500)
+    return JsonResponse({"status": "ok", "Message":"File upload Successfull"})
 
 
 
@@ -1059,94 +1171,6 @@ def add_po_contact(request):
             "action": "created" if is_new else "updated",
         }
     )
-
-
-# @csrf_exempt
-# def format_file(request):
-#     if request.method != "POST":
-#         return HttpResponse("Send a PDF file using POST")
-   
-#     pdf_file = request.FILES.get("pdf")
-
-#     if not pdf_file:
-#         return HttpResponse("No PDF uploaded", status=400)
-
-#     fs = FileSystemStorage()
-
-#     input_name = fs.save(pdf_file.name, pdf_file)
-#     input_path = fs.path(input_name)
-
-#     output_name = f"edited_{pdf_file.name}"
-#     output_path = fs.path(output_name)
-
-#     whiteout_pdf(input_path, output_path)
-
-#     response = FileResponse(
-#     open(output_path, "rb"),
-#     as_attachment=True,
-#     filename=output_name,
-#     content_type="application/pdf",
-#     )
-
-#     return response
-
-
-# @csrf_exempt
-# def format_file(request):
-#     if request.method != "POST":
-#         return HttpResponse("Send a ZIP file using POST", status=405)
-
-#     uploaded_zip = request.FILES.get("zip")
-#     assembly_client = request.POST.get("assembly_client")
-
-#     if not uploaded_zip:
-#         return HttpResponse("No ZIP uploaded", status=400)
-
-#     storage = FileSystemStorage()
-#     zip_name = storage.save(uploaded_zip.name, uploaded_zip)
-#     zip_path = storage.path(zip_name)
-
-#     output_zip_name = f"{uploaded_zip.name}"
-#     output_zip_path = storage.path(output_zip_name)
-
-#     with tempfile.TemporaryDirectory() as extract_dir, tempfile.TemporaryDirectory() as processed_dir:
-#         with zipfile.ZipFile(zip_path, "r") as zip_ref:
-#             zip_ref.extractall(extract_dir)
-
-#         for root, _, files in os.walk(extract_dir):
-#             for file_name in files:
-#                 source_path = os.path.join(root, file_name)
-#                 relative_path = os.path.relpath(source_path, extract_dir)
-#                 destination_path = os.path.join(processed_dir, relative_path)
-
-#                 os.makedirs(os.path.dirname(destination_path), exist_ok=True)
-
-#                 if file_name.lower().endswith(".pdf"):
-#                     match assembly_client.lower():
-#                         case "vvdn":
-#                             vvdn_pdf(source_path, destination_path)
-#                         case "asm":
-#                             asm_pdf(source_path, destination_path)
-#                         case "sanmina":
-#                             sanmina_pdf(source_path, destination_path)
-#                         case "anora":
-#                             anora_pdf(source_path, destination_path)
-#                 else:
-#                     shutil.copy2(source_path, destination_path)
-
-#         with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zip_ref:
-#             for root, _, files in os.walk(processed_dir):
-#                 for file_name in files:
-#                     file_path = os.path.join(root, file_name)
-#                     archive_name = os.path.relpath(file_path, processed_dir)
-#                     zip_ref.write(file_path, archive_name)
-
-#     return FileResponse(
-#         open(output_zip_path, "rb"),
-#         as_attachment=True,
-#         filename=output_zip_name,
-#         content_type="application/zip",
-#     )
 
 
 @csrf_exempt
